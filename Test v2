@@ -1,0 +1,675 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ==========================================
+-- SISTEMA DE WEBHOOK (NOTIFICACION DE EJECUCION)
+-- ==========================================
+local function enviarNotificacionWebhook()
+    local urlWebhook = "https://discord.com/api/webhooks/1517902251123802244/aWE7LO7XAziX2puRdJXMp52xxRD1WzWpEkOcRFKUkGFu6lYkf19wyM2GMSzGw0itg8dM"
+    
+    local nombreJuego = "Desconocido"
+    local idJuego = game.PlaceId
+    local iconoJuegoUrl = "https://images.rbxcdn.com/15f187a53c1550974b96df695f241a41.png"
+    
+    pcall(function()
+        local info = MarketplaceService:GetProductInfo(idJuego)
+        nombreJuego = info.Name
+    end)
+    
+    pcall(function()
+        local urlIconoAPI = "https://thumbnails.roblox.com/v1/places/gameicons?placeIds=" .. tostring(idJuego) .. "&returnUseDefaultOnEmpty=true&size=150x150&format=Png"
+        local respuesta = game:HttpGet(urlIconoAPI)
+        local datos = HttpService:JSONDecode(respuesta)
+        if datos and datos.data and datos.data[1] then
+            iconoJuegoUrl = datos.data[1].imageUrl
+        end
+    end)
+
+    local fotoPerfilUrl = "https://images.rbxcdn.com/15f187a53c1550974b96df695f241a41.png"
+    pcall(function()
+        local urlAvatarAPI = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. tostring(LocalPlayer.UserId) .. "&size=150x150&format=Png&isCircular=false"
+        local respuesta = game:HttpGet(urlAvatarAPI)
+        local datos = HttpService:JSONDecode(respuesta)
+        if datos and datos.data and datos.data[1] then
+            fotoPerfilUrl = datos.data[1].imageUrl
+        end
+    end)
+
+    local datosPayload = {
+        ["username"] = "Flowinx Logger",
+        ["avatar_url"] = fotoPerfilUrl,
+        ["embeds"] = {
+            {
+                ["title"] = "Script Ejecutado Exitosamente",
+                ["color"] = 3066993,
+                ["author"] = {
+                    ["name"] = "Ejecutado por: " .. LocalPlayer.Name,
+                    ["icon_url"] = fotoPerfilUrl
+                },
+                ["thumbnail"] = {
+                    ["url"] = iconoJuegoUrl
+                },
+                ["image"] = {
+                    ["url"] = fotoPerfilUrl
+                },
+                ["fields"] = {
+                    {
+                        ["name"] = "Usuario de Roblox",
+                        ["value"] = "**" .. LocalPlayer.Name .. "** (" .. LocalPlayer.DisplayName .. ")",
+                        ["inline"] = true
+                    },
+                    {
+                        ["name"] = "User ID",
+                        ["value"] = "`" .. tostring(LocalPlayer.UserId) .. "`",
+                        ["inline"] = true
+                    },
+                    {
+                        ["name"] = "Juego Detectado",
+                        ["value"] = "**" .. nombreJuego .. "**",
+                        ["inline"] = false
+                    },
+                    {
+                        ["name"] = "Place ID",
+                        ["value"] = "[Link al Juego](https://www.roblox.com/games/" .. tostring(idJuego) .. ") | `" .. tostring(idJuego) .. "`",
+                        ["inline"] = false
+                    }
+                },
+                ["footer"] = {
+                    ["text"] = "Flowinx Logger - " .. os.date("%Y-%m-%d %H:%M:%S"),
+                    ["icon_url"] = iconoJuegoUrl
+                }
+            }
+        }
+    }
+
+    local headers = {["Content-Type"] = "application/json"}
+    local requestFunction = syn and syn.request or http_request or request or http and http.request
+
+    if requestFunction then
+        pcall(function()
+            requestFunction({
+                Url = urlWebhook,
+                Method = "POST",
+                Headers = headers,
+                Body = HttpService:JSONEncode(datosPayload)
+            })
+        end)
+    end
+end
+
+task.spawn(enviarNotificacionWebhook)
+
+-- ==========================================
+-- ESTADOS DE LAS CONFIGURACIONES
+-- ==========================================
+local Config = {
+    Aimbot = false,
+    ESP = false,
+    TagHUD = false,
+    AutoDig = false
+}
+
+local DISTANCIA_CORTA = 40 
+local RADIO_FOV = 140             
+local VELOCIDAD_BALA_SNIPER = 850 
+local PING_COMPENSACION = 0.035    
+
+local ConexionAimbot = nil
+local ArmaEquipada = false
+local esDisparando = false
+local historialVelocidades = {}
+local DigRemote = nil
+local CirculoFOV = nil
+-- ==========================================
+-- LOGICA DE DETECCION Y PREDICCION
+-- ==========================================
+
+local function minarTierraMasivo()
+    local character = LocalPlayer.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+
+    if not DigRemote then
+        pcall(function()
+            local events = ReplicatedStorage:FindFirstChild("Events")
+            local remote = events and events:FindFirstChild("Remote")
+            DigRemote = remote and remote:FindFirstChild("Dig")
+        end)
+    end
+    
+    if not DigRemote then return end
+
+    for _, objeto in ipairs(workspace:GetDescendants()) do
+        if objeto:IsA("Part") and objeto.Name == "Dirt" and objeto.Parent then
+            local idBloque = tonumber(objeto.Parent.Name)
+            if idBloque then
+                local distancia = (objeto.Position - rootPart.Position).Magnitude
+                if distancia < 18 then
+                    task.spawn(function()
+                        DigRemote:FireServer(idBloque, true)
+                    end)
+                end
+            end
+        end
+    end
+end
+
+local function estaVisible(personajeEnemigo)
+    if not personajeEnemigo or not personajeEnemigo:FindFirstChild("HumanoidRootPart") then return false end
+    local exito, resultado = pcall(function()
+        local puntosOcultos = Camera:GetPartsObscuringTarget(
+            {personajeEnemigo.HumanoidRootPart.Position}, 
+            {LocalPlayer.Character, personajeEnemigo}
+        )
+        return #puntosOcultos == 0
+    end)
+    return exito and resultado or false
+end
+
+local function obtenerEnemigoMasCercano()
+    local mejorObjetivo = nil
+    local distanciaMaxima = math.huge
+    local centroPantalla = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, jugador in ipairs(Players:GetPlayers()) do
+        if jugador ~= LocalPlayer and jugador.Team ~= LocalPlayer.Team then
+            local personaje = jugador.Character
+            if personaje and personaje:FindFirstChild("Humanoid") and personaje.Humanoid.Health > 0 and personaje:FindFirstChild("HumanoidRootPart") then
+                if estaVisible(personaje) then
+                    local posicionPantalla, visibleEnPantalla = Camera:WorldToViewportPoint(personaje.HumanoidRootPart.Position)
+                    if visibleEnPantalla then
+                        local distanciaAlCentro = (Vector2.new(posicionPantalla.X, posicionPantalla.Y) - centroPantalla).Magnitude
+                        if distanciaAlCentro <= RADIO_FOV then
+                            local miTorso = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                            if miTorso then
+                                local distanciaStuds = (personaje.HumanoidRootPart.Position - miTorso.Position).Magnitude
+                                if distanciaStuds < distanciaMaxima then
+                                    distanciaMaxima = distanciaStuds
+                                    mejorObjetivo = jugador
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return mejorObjetivo, distanciaMaxima
+end
+
+local function calcularPrediccionEstrategica(jugadorEnemigo, parteNombre, distancia)
+    local personaje = jugadorEnemigo.Character
+    local parte = personaje:FindFirstChild(parteNombre) or personaje:FindFirstChild("HumanoidRootPart")
+    local rootEnemigo = personaje:FindFirstChild("HumanoidRootPart")
+    local rootMio = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not parte or not rootEnemigo or not rootMio then 
+        if parte then 
+            return parte.Position 
+        else 
+            return nil 
+        end 
+    end
+    
+    local velEnemigo = rootEnemigo.AssemblyLinearVelocity
+    local velMia = rootMio.AssemblyLinearVelocity
+    local velocidadRelativa = velEnemigo - velMia
+    
+    local tiempoDeVuelo = (distancia / VELOCIDAD_BALA_SNIPER) + PING_COMPENSACION
+    
+    local idJugador = jugadorEnemigo.UserId
+    local ultimaVelocidad = historialVelocidades[idJugador] or velEnemigo
+    historialVelocidades[idJugador] = velEnemigo
+    
+    local haciendoMovimientoInsano = (ultimaVelocidad.X > 1 and velEnemigo.X < -1) or (ultimaVelocidad.X < -1 and velEnemigo.X > 1)
+    
+    if haciendoMovimientoInsano or velocidadRelativa.Magnitude < 3 then
+        return personaje.HumanoidRootPart.Position
+    end
+    
+    if math.abs(velEnemigo.Y) > 1.5 then
+        return rootEnemigo.Position + (velocidadRelativa * tiempoDeVuelo) - Vector3.new(0, 0.8, 0)
+    end
+    
+    return parte.Position + (velocidadRelativa * (tiempoDeVuelo * 1.15))
+end
+
+local function forzarDisparoGatillo(objetivo, distancia)
+    if esDisparando or not objetivo.Character or not Config.Aimbot then return end
+    esDisparando = true
+    
+    local parteBase = "UpperTorso"
+    if math.random(1, 10) <= 2 then parteBase = "Head" end
+    
+    local posicionFuturaDisparo = calcularPrediccionEstrategica(objetivo, parteBase, distancia)
+    
+    if posicionFuturaDisparo then
+        pcall(function()
+            local repStorage = game:GetService("ReplicatedStorage")
+            local events = repStorage:FindFirstChild("Events")
+            local remote = events and events:FindFirstChild("Remote")
+            local shotTarget = remote and remote:FindFirstChild("ShotTarget")
+            
+            if shotTarget then
+                shotTarget:FireServer(posicionFuturaDisparo, "Sniper")
+            end
+        end)
+    end
+    
+    task.wait(0.12)
+    esDisparando = false
+end
+
+local function iniciarAimbotSilencioso()
+    if ConexionAimbot then return end
+    ConexionAimbot = RunService.RenderStepped:Connect(function()
+        if ArmaEquipada and Config.Aimbot then
+            local objetivo, distancia = obtenerEnemigoMasCercano()
+            if objetivo and objetivo.Character then
+                task.spawn(function()
+                    forzarDisparoGatillo(objetivo, distancia)
+                end)
+            end
+        end
+    end)
+end
+
+local function detenerAimbotSilencioso()
+    if ConexionAimbot then
+        ConexionAimbot:Disconnect()
+        ConexionAimbot = nil
+    end
+end
+
+-- ==========================================
+-- CREACION DE ESP
+-- ==========================================
+local function crearESP(jugador)
+    if jugador == LocalPlayer then return end
+    
+    local function aplicarUI(personaje)
+        if not personaje then return end
+        local torso = personaje:WaitForChild("HumanoidRootPart", 5)
+        if not torso then return end
+
+        if torso:FindFirstChild("ESP_UI") then torso.ESP_UI:Destroy() end
+        if personaje:FindFirstChild("ESP_Cuerpo") then personaje.ESP_Cuerpo:Destroy() end
+
+        local sgui = Instance.new("BillboardGui")
+        sgui.Name = "ESP_UI"
+        sgui.AlwaysOnTop = true
+        sgui.Size = UDim2.new(0, 200, 0, 60)
+        sgui.StudsOffset = Vector3.new(0, 3, 0)
+        sgui.Adornee = torso
+        sgui.Parent = torso
+
+        local texto = Instance.new("TextLabel", sgui)
+        texto.Size = UDim2.new(1, 0, 1, 0)
+        texto.BackgroundTransparency = 1 
+        texto.TextStrokeTransparency = 0  
+        texto.Font = Enum.Font.SourceSansBold
+        texto.TextSize = 11
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "ESP_Cuerpo"
+        highlight.FillTransparency = 0.5
+        highlight.OutlineTransparency = 0.2
+        highlight.Parent = personaje
+
+        local bucleESP
+        bucleESP = RunService.RenderStepped:Connect(function()
+            if not jugador or not jugador.Parent or not personaje or not personaje.Parent or not personaje:FindFirstChild("Humanoid") or personaje.Humanoid.Health <= 0 then
+                sgui:Destroy()
+                highlight:Destroy()
+                bucleESP:Disconnect()
+                return
+            end
+
+            if jugador.Team == LocalPlayer.Team then
+                sgui.Enabled = false
+                highlight.Enabled = false
+                return
+            end
+
+            highlight.Enabled = Config.ESP
+
+            local miTorso = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if miTorso then
+                local distancia = math.floor((torso.Position - miTorso.Position).Magnitude)
+                local cubierto = not estaVisible(personaje)
+                
+                local vidaActual = math.floor(personaje.Humanoid.Health)
+                local vidaMaxima = math.floor(personaje.Humanoid.MaxHealth)
+                
+                local armaEquipadaEnemigo = "Ninguna"
+                for _, herramienta in ipairs(personaje:GetChildren()) do
+                    if herramienta:IsA("Tool") then
+                        armaEquipadaEnemigo = herramienta.Name
+                        break
+                    end
+                end
+
+                local lineaIdentificacion = ""
+                if Config.ESP then
+                    lineaIdentificacion = jugador.Name
+                end
+                
+                local lineaDatosHUD = ""
+                if Config.TagHUD then
+                    lineaDatosHUD = "\n[Arma: " .. armaEquipadaEnemigo .. "] - [HP: " .. vidaActual .. "/" .. vidaMaxima .. "]"
+                end
+                
+                local lineaDistancia = ""
+                if Config.ESP then
+                    if cubierto then
+                        lineaDistancia = "\n[Oculto] " .. distancia .. "m"
+                    else
+                        lineaDistancia = "\n[Visto] " .. distancia .. "m"
+                    end
+                end
+
+                if not Config.ESP and not Config.TagHUD then
+                    sgui.Enabled = false
+                else
+                    sgui.Enabled = true
+                    texto.Text = lineaIdentificacion .. lineaDatosHUD .. lineaDistancia
+                end
+
+                if cubierto then
+                    texto.TextColor3 = Color3.fromRGB(255, 130, 0)
+                    highlight.FillColor = Color3.fromRGB(255, 130, 0)
+                else
+                    if distancia <= DISTANCIA_CORTA then
+                        texto.TextColor3 = Color3.fromRGB(255, 0, 0)
+                        highlight.FillColor = Color3.fromRGB(255, 0, 0)
+                    else
+                        texto.TextColor3 = Color3.fromRGB(0, 255, 100)
+                        highlight.FillColor = Color3.fromRGB(0, 255, 0)
+                    end
+                end
+            end
+        end)
+    end
+
+    if jugador.Character then aplicarUI(jugador.Character) end
+    jugador.CharacterAdded:Connect(aplicarUI)
+end-- ==========================================
+-- INICIALIZACION DE LA LIBRERIA RAYFIELD
+-- ==========================================
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "FLOWINX SYSTEM",
+    LoadingTitle = "IGN Flowinx - System Loading",
+    LoadingSubtitle = "by Flowinx Premium",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "FlowinxHubConfig",
+        FileName = "TutorialHub"
+    },
+    Discord = {
+        Enabled = false,
+        Invite = "noinvite",
+        RememberJoins = true
+    },
+    KeySystem = false
+})
+
+Rayfield:Notify({
+    Title = "Flowinx System Loaded",
+    Content = "Sistemas de asistencia de punteria y automatizacion activos.",
+    Duration = 4,
+    Image = 4483362458
+})
+
+local CombatTab = Window:CreateTab("Combat", 4483362458)
+local VisualsTab = Window:CreateTab("Visuals", 4483362458)
+local WorldTab = Window:CreateTab("World / Misc", 4483362458)
+local FlagTab = Window:CreateTab("Bandera", 4483362458)
+local CreditsTab = Window:CreateTab("Creditos Dueno Flowinx", 4483362458)
+
+-- ==========================================
+-- COMPONENTES DE INTERFAZ: COMBAT
+-- ==========================================
+CombatTab:CreateSection("Sniper Silent Aim")
+
+pcall(function()
+    CirculoFOV = Drawing.new("Circle")
+    CirculoFOV.Visible = false
+    CirculoFOV.Thickness = 1.5
+    CirculoFOV.Radius = RADIO_FOV
+    CirculoFOV.Color = Color3.fromRGB(0, 255, 255)
+    CirculoFOV.Filled = false
+    CirculoFOV.Transparency = 0.4
+
+    RunService.RenderStepped:Connect(function()
+        if CirculoFOV then
+            local dimensionesPantalla = Camera.ViewportSize
+            CirculoFOV.Position = Vector2.new(dimensionesPantalla.X / 2, dimensionesPantalla.Y / 2)
+        end
+    end)
+end)
+
+CombatTab:CreateToggle({
+    Name = "Activar Silent Aim (Auto-Shot)",
+    CurrentValue = false,
+    Flag = "SilentAimToggle",
+    Callback = function(Value)
+        Config.Aimbot = Value
+        if Value then
+            if ArmaEquipada and CirculoFOV then CirculoFOV.Visible = true end
+            iniciarAimbotSilencioso()
+        else
+            if CirculoFOV then CirculoFOV.Visible = false end
+            detenerAimbotSilencioso()
+        end
+    end,
+})
+
+-- ==========================================
+-- COMPONENTES DE INTERFAZ: VISUALS
+-- ==========================================
+VisualsTab:CreateSection("Render Settings")
+
+VisualsTab:CreateToggle({
+    Name = "Ver Alerta ESP Siluetas",
+    CurrentValue = false,
+    Flag = "EspToggle",
+    Callback = function(Value)
+        Config.ESP = Value
+    end,
+})
+
+VisualsTab:CreateToggle({
+    Name = "Ver Info de Cabeza (Tag HUD)",
+    CurrentValue = false,
+    Flag = "TagHudToggle",
+    Callback = function(Value)
+        Config.TagHUD = Value
+    end,
+})
+
+-- ==========================================
+-- COMPONENTES DE INTERFAZ: WORLD
+-- ==========================================
+WorldTab:CreateSection("Automatization")
+
+WorldTab:CreateToggle({
+    Name = "Auto Excavacion (18 Studs)",
+    CurrentValue = false,
+    Flag = "AutoDigToggle",
+    Callback = function(Value)
+        Config.AutoDig = Value
+    end,
+})
+
+-- ==========================================
+-- COMPONENTES DE INTERFAZ: FLAG (ROBO DE BANDERA)
+-- ==========================================
+FlagTab:CreateSection("Automatizacion de Objetivos")
+
+FlagTab:CreateButton({
+    Name = "Robar Bandera Enemiga",
+    Callback = function()
+        local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local root = character:WaitForChild("HumanoidRootPart")
+        
+        local walkSpeed = 30
+        local nearLadderDistance = 3 
+
+        local myTeamName = ""
+        if LocalPlayer.Team then
+            myTeamName = LocalPlayer.Team.Name
+        end
+        local myTeam = "Blue"
+        if string.sub(string.lower(myTeamName), 1, 1) == "r" then
+            myTeam = "Red"
+        end
+        local enemyTeam = "Red"
+        if myTeam == "Red" then
+            enemyTeam = "Blue"
+        end
+
+        local function walkTo(targetCFrame, speed)
+            local distance = (root.Position - targetCFrame.Position).Magnitude
+            local info = TweenInfo.new(distance / speed, Enum.EasingStyle.Linear)
+            local tween = TweenService:Create(root, info, {CFrame = targetCFrame})
+            tween:Play()
+            tween.Completed:Wait()
+        end
+
+        local function findLadderIn(teamName)
+            local base = workspace.Map:FindFirstChild(teamName)
+            if base and base:FindFirstChild("Hole") then
+                return base.Hole:FindFirstChild("Smooth Block Model", true)
+            end
+            return nil
+        end
+
+        local spawnPos = Vector3.new(3.295, -24.45, 1.251)
+
+        local myLadderStart = findLadderIn(myTeam)
+        if myLadderStart then
+            root.CFrame = myLadderStart:GetPivot() * CFrame.new(0, 0, nearLadderDistance)
+            task.wait(0.5)
+        end
+
+        local enemyLadder = findLadderIn(enemyTeam)
+        local enemyFlag = workspace.Map[enemyTeam].Flag:FindFirstChild("Handle", true)
+
+        if enemyLadder and enemyFlag then
+            root.CFrame = enemyLadder:GetPivot() * CFrame.new(0, 0, 5) 
+            task.wait(2)
+            root.CFrame = enemyLadder:GetPivot() * CFrame.new(0, 7, 0)
+            task.wait(0.5)
+            walkTo(enemyFlag.CFrame * CFrame.new(0, 2, 0), walkSpeed)
+            task.wait(1.5) 
+
+            local myLadder = findLadderIn(myTeam)
+            local myFlag = workspace.Map[myTeam].Flag:FindFirstChild("Handle", true)
+            
+            if myLadder and myFlag then
+                root.CFrame = enemyLadder:GetPivot() * CFrame.new(0, 0, 5)
+                task.wait(0.5)
+                root.CFrame = CFrame.new(spawnPos)
+
+                Rayfield:Notify({
+                    Title = "Procesando Captura",
+                    Content = "Por favor espera 15 segundos en la base para asegurar el mejor resultado.",
+                    Duration = 15,
+                    Image = 4483362458
+                })
+                task.wait(15)
+
+                local nearLadderPoint = myLadder:GetPivot() * CFrame.new(0, 0, nearLadderDistance)
+                walkTo(nearLadderPoint, walkSpeed)
+                local flagTarget = myFlag.CFrame * CFrame.new(0, 2, 0)
+                walkTo(flagTarget, walkSpeed)
+            end
+        end
+    end,
+})
+
+-- ==========================================
+-- COMPONENTES DE INTERFAZ: CREDITOS DUENO
+-- ==========================================
+CreditsTab:CreateSection("Creador de Flowinx Hub")
+
+CreditsTab:CreateLabel("TikTok Oficial:")
+CreditsTab:CreateParagraph({
+    Title = "@editedbysalif",
+    Content = "Sigue al creador oficial de Flowinx Hub en TikTok para actualizaciones y nuevos lanzamientos."
+})
+
+CreditsTab:CreateSection("Comunidad Oficial")
+
+CreditsTab:CreateLabel("Servidor de Comunidad:")
+CreditsTab:CreateParagraph({
+    Title = "Flots Scripts",
+    Content = "La cuna oficial de los mejores scripts desarrollados por la comunidad de Flowinx."
+})
+
+CreditsTab:CreateButton({
+    Name = "Copiar Invitacion de Discord",
+    Callback = function()
+        setclipboard("https://discord.gg/UkkkzhmbRY")
+        Rayfield:Notify({
+            Title = "Enlace Copiado",
+            Content = "El link de Discord se ha guardado en tu portapapeles",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end,
+})
+
+-- ==========================================
+-- CONEXIONES DE EVENTOS Y CONTROL DE MOCHILA
+-- ==========================================
+local function vincularHerramienta(herramienta)
+    if herramienta:IsA("Tool") and herramienta.Name == "Sniper" then
+        herramienta.Equipped:Connect(function()
+            ArmaEquipada = true
+            if Config.Aimbot and CirculoFOV then CirculoFOV.Visible = true end
+            iniciarAimbotSilencioso()
+        end)
+
+        herramienta.Unequipped:Connect(function()
+            ArmaEquipada = false
+            if CirculoFOV then CirculoFOV.Visible = false end
+            detenerAimbotSilencioso()
+        end)
+    end
+end
+
+local function iniciarCargaDeMochila(personaje)
+    local mochila = LocalPlayer:WaitForChild("Backpack", 5)
+    if mochila then
+        for _, objeto in ipairs(mochila:GetChildren()) do vincularHerramienta(objeto) end
+        mochila.ChildAdded:Connect(vincularHerramienta)
+    end
+    personaje.ChildAdded:Connect(vincularHerramienta)
+    ArmaEquipada = false
+    detenerAimbotSilencioso()
+end
+
+task.spawn(function()
+    while true do
+        if Config.AutoDig then
+            minarTierraMasivo()
+        end
+        task.wait(0.1)
+    end
+end)
+
+for _, j in ipairs(Players:GetPlayers()) do crearESP(j) end
+Players.PlayerAdded:Connect(crearESP)
+
+if LocalPlayer.Character then iniciarCargaDeMochila(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(iniciarCargaDeMochila)
+
