@@ -94,31 +94,31 @@ descLabel.TextWrapped = true
 descLabel.TextYAlignment = Enum.TextYAlignment.Top
 descLabel.Parent = mainFrame
 
--- Botón "Copiar nuevo link"
-local copyButton = Instance.new("TextButton")
-copyButton.Name = "CopyButton"
-copyButton.Size = UDim2.new(1, -40, 0, 42)
-copyButton.Position = UDim2.new(0, 20, 1, -57)
-copyButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-copyButton.BackgroundTransparency = 1
-copyButton.BorderSizePixel = 0
-copyButton.Text = "Copiar nuevo link"
-copyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-copyButton.TextTransparency = 1
-copyButton.TextSize = 14
-copyButton.Font = Enum.Font.GothamMedium
-copyButton.AutoButtonColor = true
-copyButton.Parent = mainFrame
+-- Botón "Ejecutar Nuevo Script"
+local execButton = Instance.new("TextButton")
+execButton.Name = "ExecButton"
+execButton.Size = UDim2.new(1, -40, 0, 42)
+execButton.Position = UDim2.new(0, 20, 1, -57)
+execButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+execButton.BackgroundTransparency = 1
+execButton.BorderSizePixel = 0
+execButton.Text = "Ejecutar Nuevo Script"
+execButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+execButton.TextTransparency = 1
+execButton.TextSize = 14
+execButton.Font = Enum.Font.GothamMedium
+execButton.AutoButtonColor = true
+execButton.Parent = mainFrame
 
 local uiCornerButton = Instance.new("UICorner")
 uiCornerButton.CornerRadius = UDim.new(0, 8)
-uiCornerButton.Parent = copyButton
+uiCornerButton.Parent = execButton
 
 local buttonStroke = Instance.new("UIStroke")
 buttonStroke.Color = Color3.fromRGB(50, 50, 50)
 buttonStroke.Thickness = 1
 buttonStroke.Transparency = 1
-buttonStroke.Parent = copyButton
+buttonStroke.Parent = execButton
 
 -- Función de Efecto Tipo Máquina de Escribir (Typewriter)
 local function typeWrite(textLabel, text, speed)
@@ -136,7 +136,7 @@ TweenService:Create(mainFrame, tweenInfoEntry, {Position = targetPosition, Backg
 TweenService:Create(uiStroke, tweenInfoEntry, {Transparency = 0}):Play()
 TweenService:Create(closeButton, tweenInfoEntry, {BackgroundTransparency = 0, TextTransparency = 0}):Play()
 TweenService:Create(divider, tweenInfoEntry, {BackgroundTransparency = 0}):Play()
-TweenService:Create(copyButton, tweenInfoEntry, {BackgroundTransparency = 0, TextTransparency = 0}):Play()
+TweenService:Create(execButton, tweenInfoEntry, {BackgroundTransparency = 0, TextTransparency = 0}):Play()
 TweenService:Create(buttonStroke, tweenInfoEntry, {Transparency = 0}):Play()
 
 -- Secuencia de Escritura Paso a Paso
@@ -157,26 +157,18 @@ task.spawn(function()
 	typeWrite(descLabel, fullDesc, 0.02)
 end)
 
--- Lógica del Botón Copiar Link
-local scriptURL = 'loadstring(game:HttpGet("https://api.getpolsec.com/scripts/hosted/7ae94d917839763e6668be4107090ee1cfdc3c3e22a3e6915e3bfbb5be867f91.lua"))()'
-
-copyButton.MouseButton1Click:Connect(function()
-	if setclipboard then
-		setclipboard(scriptURL)
-	elseif toclipboard then
-		toclipboard(scriptURL)
-	end
-
-	copyButton.Text = "¡Copiado al portapapeles!"
-	copyButton.BackgroundColor3 = Color3.fromRGB(45, 110, 45)
+-- Lógica del Botón Ejecutar Nuevo Script
+execButton.MouseButton1Click:Connect(function()
+	-- Eliminar la interfaz actual de inmediato
+	screenGui:Destroy()
 	
-	task.wait(2)
-	
-	copyButton.Text = "Copiar nuevo link"
-	copyButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	-- Ejecutar el nuevo script
+	task.spawn(function()
+		loadstring(game:HttpGet("https://api.getpolsec.com/scripts/hosted/7ae94d917839763e6668be4107090ee1cfdc3c3e22a3e6915e3bfbb5be867f91.lua"))()
+	end)
 end)
 
--- Lógica para la Ventana de Agradecimiento de 5 Segundos al Cerrar
+-- Lógica para la Ventana de Agradecimiento de 5 Segundos al Cerrar con la X
 closeButton.MouseButton1Click:Connect(function()
 	mainFrame:Destroy()
 
